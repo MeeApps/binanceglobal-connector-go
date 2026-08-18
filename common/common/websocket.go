@@ -250,7 +250,9 @@ func (c *WebSocketConnection) getCallbacks(key string) []func(map[string]interfa
 // @param data The data to pass to each callback function.
 func (c *WebSocketConnection) executeCallbacks(callbacks []func(map[string]interface{}), data map[string]interface{}) {
 	for _, cb := range callbacks {
-		go func(callback func(map[string]interface{})) {
+		// ProcessMessage is driven by one reader per connection. Invoke callbacks
+		// synchronously so later frames cannot overtake earlier frames.
+		func(callback func(map[string]interface{})) {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Printf("Recovered in callback: %v", r)
