@@ -53,6 +53,7 @@ type ConfigurationRestAPIOption func(*ConfigurationRestAPI)
 // @field privateKeyPassphrase The passphrase for the private key.
 // @field BasePath The base URL for the WebSocket API.
 // @field Timeout The timeout duration for WebSocket connections.
+// @field DisableAutoReconnect Indicates that the caller owns transport reconnection.
 // @field ReconnectDelay The delay duration before attempting to reconnect.
 // @field Compression Indicates whether to use compression.
 // @field Proxy The proxy configuration.
@@ -69,6 +70,7 @@ type ConfigurationWebsocketApi struct {
 	privateKeyPassphrase string
 	BasePath             string
 	Timeout              time.Duration
+	DisableAutoReconnect bool
 	ReconnectDelay       time.Duration
 	Compression          bool
 	Proxy                *ProxyConfig
@@ -291,6 +293,14 @@ func WithWsTimeout(v time.Duration) ConfigurationWebsocketApiOption {
 
 func WithWsReconnectDelay(v time.Duration) ConfigurationWebsocketApiOption {
 	return func(c *ConfigurationWebsocketApi) { c.ReconnectDelay = v }
+}
+
+func WithWsAutoReconnect(v bool) ConfigurationWebsocketApiOption {
+	return func(c *ConfigurationWebsocketApi) { c.DisableAutoReconnect = !v }
+}
+
+func (c *ConfigurationWebsocketApi) GetAutoReconnect() bool {
+	return !c.DisableAutoReconnect
 }
 
 func (c *ConfigurationWebsocketApi) GetReconnectDelay() time.Duration {
