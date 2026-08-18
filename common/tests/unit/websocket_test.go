@@ -825,6 +825,74 @@ func TestProcessMessage_SubscriptionMessageHandled(t *testing.T) {
 	}
 }
 
+func TestProcessMessage_SubscriptionCallbacksPreserveReadOrder(t *testing.T) {
+	mockConn := NewMockWebSocketConn()
+	for _, sequence := range []float64{1, 2} {
+		msgBytes, err := json.Marshal(map[string]interface{}{
+			"subscriptionId": 1.0,
+			"sequence":       sequence,
+		})
+		require.NoError(t, err)
+		mockConn.AddReadMessage(websocket.TextMessage, msgBytes)
+	}
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondStarted := make(chan struct{})
+	callback := func(data map[string]interface{}) {
+		switch data["sequence"] {
+		case float64(1):
+			close(firstStarted)
+			<-releaseFirst
+		case float64(2):
+			close(secondStarted)
+		}
+	}
+
+	conn := &common.WebSocketConnection{
+		Id:                "test-connection",
+		Connected:         common.OPEN,
+		PendingMessages:   sync.Map{},
+		StreamCallbackMap: map[string][]func(map[string]interface{}){"1": {callback}},
+		Websocket:         mockConn,
+		Done:              make(chan struct{}),
+		ErrorChan:         make(chan error, 1),
+	}
+
+	processingDone := make(chan error, 1)
+	go func() {
+		if err := conn.ProcessMessage(); err != nil {
+			processingDone <- err
+			return
+		}
+		processingDone <- conn.ProcessMessage()
+	}()
+
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first callback did not start")
+	}
+	select {
+	case <-secondStarted:
+		t.Fatal("second callback started before the first callback completed")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	select {
+	case err := <-processingDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("message processing did not finish")
+	}
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second callback did not run")
+	}
+}
+
 func TestProcessMessage_SubscriptionMessageNotHandled(t *testing.T) {
 	var logOutput bytes.Buffer
 	originalLogger := log.Writer()
