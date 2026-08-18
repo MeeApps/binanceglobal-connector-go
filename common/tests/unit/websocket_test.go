@@ -158,8 +158,8 @@ func createTestWebsocketAPI(mockConn *MockWebSocketConn) *common.WebsocketAPI {
 	cfg := common.NewConfigurationWebsocketApi(
 		common.WithWsApiKey("test-api-key"),
 		common.WithWsApiSecret("test-api-secret"),
-		common.WithWsTimeout(5 * time.Second),
-		common.WithWsReconnectDelay(1 * time.Second),
+		common.WithWsTimeout(5*time.Second),
+		common.WithWsReconnectDelay(1*time.Second),
 		common.WithWsPoolSize(1),
 	)
 
@@ -400,9 +400,12 @@ func TestHandleReadError_NormalClose(t *testing.T) {
 	conn.HandleReadError(err)
 
 	select {
-	case err := <-conn.ErrorChan:
-		t.Errorf("Unexpected error sent to ErrorChan: %v", err)
+	case got := <-conn.ErrorChan:
+		if got != err {
+			t.Errorf("Expected error %v, got %v", err, got)
+		}
 	default:
+		t.Error("Expected remote normal close to be sent to ErrorChan")
 	}
 
 	if conn.Connected != common.CLOSED {
@@ -415,7 +418,7 @@ func TestHandleReadError_IntentionalClose(t *testing.T) {
 
 	conn := &common.WebSocketConnection{
 		Id:                "test-connection",
-		Connected:         common.OPEN,
+		Connected:         common.CLOSING,
 		PendingMessages:   sync.Map{},
 		StreamCallbackMap: make(map[string][]func(map[string]interface{})),
 		Websocket:         mockConn,
@@ -423,7 +426,7 @@ func TestHandleReadError_IntentionalClose(t *testing.T) {
 		ErrorChan:         make(chan error, 1),
 	}
 
-	err := errors.New("use of closed network connection")
+	err := &websocket.CloseError{Code: websocket.CloseNormalClosure, Text: "normal closure"}
 	conn.HandleReadError(err)
 
 	select {
@@ -434,6 +437,17 @@ func TestHandleReadError_IntentionalClose(t *testing.T) {
 
 	if conn.Connected != common.CLOSED {
 		t.Errorf("Expected connection to be closed, got %v", conn.Connected)
+	}
+}
+
+func TestWebSocketConfiguration_AutoReconnect(t *testing.T) {
+	apiDefault := common.NewConfigurationWebsocketApi()
+	if !apiDefault.GetAutoReconnect() {
+		t.Fatal("WebSocket API auto-reconnect should default to enabled")
+	}
+	apiDisabled := common.NewConfigurationWebsocketApi(common.WithWsAutoReconnect(false))
+	if apiDisabled.GetAutoReconnect() {
+		t.Fatal("WithWsAutoReconnect(false) did not disable WebSocket API auto-reconnect")
 	}
 }
 
@@ -1099,6 +1113,34 @@ func TestHandleServerShutdown_TriggersReconnect(t *testing.T) {
 	}
 }
 
+func TestHandleServerShutdown_ReportsErrorWhenAutoReconnectDisabled(t *testing.T) {
+	conn := &common.WebSocketConnection{
+		Id:                   "test-connection",
+		DisableAutoReconnect: true,
+		ErrorChan:            make(chan error, 1),
+		ReconnectChan:        make(chan struct{}, 1),
+	}
+
+	conn.HandleServerShutdown(map[string]interface{}{
+		"e": "serverShutdown",
+		"E": float64(time.Now().UnixMilli()),
+	})
+
+	select {
+	case err := <-conn.ErrorChan:
+		if err == nil || err.Error() != "websocket server shutdown" {
+			t.Fatalf("unexpected server shutdown error: %v", err)
+		}
+	default:
+		t.Fatal("expected server shutdown to be sent to ErrorChan")
+	}
+	select {
+	case <-conn.ReconnectChan:
+		t.Fatal("connector attempted to own reconnect while auto-reconnect was disabled")
+	default:
+	}
+}
+
 func TestHandleServerShutdown_MissingTimestamp_NoReconnect(t *testing.T) {
 	conn := &common.WebSocketConnection{
 		Id:            "test-connection",
@@ -1114,7 +1156,7 @@ func TestHandleServerShutdown_MissingTimestamp_NoReconnect(t *testing.T) {
 	case <-conn.ReconnectChan:
 		t.Fatal("expected no reconnect signal but one was received")
 	case <-time.After(100 * time.Millisecond):
-    }
+	}
 }
 
 func TestHandleServerShutdown_MissingTimestamp(t *testing.T) {
@@ -2628,7 +2670,7 @@ func TestWebsocketAPI_CloseWebSocketConnection_MultipleConnections(t *testing.T)
 	cfg := common.NewConfigurationWebsocketApi(
 		common.WithWsApiKey("test-key"),
 		common.WithWsApiSecret("test-secret"),
-		common.WithWsTimeout(5 * time.Second),
+		common.WithWsTimeout(5*time.Second),
 		common.WithWsPoolSize(2),
 	)
 

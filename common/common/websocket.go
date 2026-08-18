@@ -170,6 +170,15 @@ func (c *WebSocketConnection) HandleServerShutdown(data map[string]interface{}) 
 		log.Println("serverShutdown received without timestamp")
 		return
 	}
+	if c.DisableAutoReconnect {
+		err := errors.New("websocket server shutdown")
+		select {
+		case c.ErrorChan <- err:
+		default:
+		}
+		c.notifyPendingMessagesWithError(err)
+		return
+	}
 
 	select {
 	case c.ReconnectChan <- struct{}{}:
@@ -267,22 +276,26 @@ func (c *WebSocketConnection) executeCallbacks(callbacks []func(map[string]inter
 //
 // @param err The error encountered during the read operation.
 func (c *WebSocketConnection) HandleReadError(err error) {
-	if c.isNormalCloseError(err) {
-		log.Printf("WebSocket closed normally for %s", c.Id)
-		c.Connected = CLOSED
-	} else if strings.Contains(err.Error(), "use of closed network connection") {
+	intentionalClose := c.Connected == CLOSING || strings.Contains(err.Error(), "use of closed network connection")
+	c.Connected = CLOSED
+
+	if intentionalClose {
 		log.Printf("WebSocket %s closed intentionally", c.Id)
-		c.Connected = CLOSED
+		return
+	}
+
+	if c.isNormalCloseError(err) {
+		log.Printf("WebSocket closed remotely for %s: %v", c.Id, err)
 	} else {
 		log.Printf("WebSocket read error: %v\n", err)
-
-		select {
-		case c.ErrorChan <- err:
-		default:
-		}
-
-		c.notifyPendingMessagesWithError(err)
 	}
+
+	select {
+	case c.ErrorChan <- err:
+	default:
+	}
+
+	c.notifyPendingMessagesWithError(err)
 }
 
 // isNormalCloseError checks if the error is a normal WebSocket closure error.
@@ -552,6 +565,11 @@ func (w *WebSocketCommon) startReconnectHandler(conn *WebSocketConnection, confi
 	}()
 }
 
+func autoReconnectEnabled(config WebSocketConfig) bool {
+	configured, ok := config.(interface{ GetAutoReconnect() bool })
+	return !ok || configured.GetAutoReconnect()
+}
+
 // connectSingleMode establishes a single WebSocket connection.
 //
 // @param BasePath The base URL for the WebSocket connection.
@@ -568,9 +586,13 @@ func (w *WebSocketCommon) connectSingleMode(BasePath string, headers http.Header
 
 	connection := w.Connections[0]
 	w.configureConnection(conn, connection)
-	w.startReconnectHandler(connection, config, userAgent)
+	autoReconnect := autoReconnectEnabled(config)
+	connection.DisableAutoReconnect = !autoReconnect
 	go connection.Listen()
-	go w.KeepAlive(connection, config, userAgent)
+	if autoReconnect {
+		w.startReconnectHandler(connection, config, userAgent)
+		go w.KeepAlive(connection, config, userAgent)
+	}
 	return nil
 }
 
@@ -602,9 +624,13 @@ func (w *WebSocketCommon) connectPoolMode(headers http.Header, dialer websocket.
 				}
 
 				w.configureConnection(wsConn, conn)
-				w.startReconnectHandler(conn, config, userAgent)
+				autoReconnect := autoReconnectEnabled(config)
+				conn.DisableAutoReconnect = !autoReconnect
 				go conn.Listen()
-				go w.KeepAlive(conn, config, userAgent)
+				if autoReconnect {
+					w.startReconnectHandler(conn, config, userAgent)
+					go w.KeepAlive(conn, config, userAgent)
+				}
 				successChan <- true
 			}(num, connection)
 		}

@@ -79,18 +79,19 @@ type WebSocketConn interface {
 }
 
 type WebSocketConnection struct {
-	Id                  string
-	Connected           WebsocketStatus
-	PendingMessages     sync.Map
-	StreamCallbackMap   map[string][]func(map[string]interface{})
-	Websocket           WebSocketConn
-	SessionLogon        bool
-	SessionLogonRequest *SessionLogonRequest
-	StreamConnectionMap []string
-	Done                chan struct{}
-	ErrorChan           chan error
-	ReconnectChan       chan struct{}
-	mu                  sync.Mutex
+	Id                   string
+	Connected            WebsocketStatus
+	PendingMessages      sync.Map
+	StreamCallbackMap    map[string][]func(map[string]interface{})
+	Websocket            WebSocketConn
+	SessionLogon         bool
+	SessionLogonRequest  *SessionLogonRequest
+	StreamConnectionMap  []string
+	DisableAutoReconnect bool
+	Done                 chan struct{}
+	ErrorChan            chan error
+	ReconnectChan        chan struct{}
+	mu                   sync.Mutex
 }
 
 type WebSocketCommon struct {
